@@ -36,6 +36,14 @@ struct Projectile {
     float speed;
 };
 
+struct SteelBlock {
+    float x;
+    float y;
+    int width;
+    int height;
+};
+
+std::vector<SteelBlock> steelBlocks;
 std::vector<Enemy> enemies;
 std::vector<Brick> bricks;
 std::vector<Projectile> projectiles;
@@ -52,7 +60,7 @@ void handleInput(SDL_Event& event, bool& running) {
     else if (event.type == SDL_KEYDOWN) {
         switch (event.key.keysym.sym) {
         case SDLK_SPACE:
-            if (projectiles.empty()) {
+            if (projectiles.empty() && SDL_GetTicks() - lastShotTime > 2000) {
                 // Создаем новый снаряд
                 Projectile projectile;
                 projectile.direction = tankDirection;
@@ -63,20 +71,22 @@ void handleInput(SDL_Event& event, bool& running) {
                     projectile.y = tankY - PROJECTILE_HEIGHT;
                     break;
                 case 1:
-                    projectile.x = tankX + PROJECTILE_WIDTH;
-                    projectile.y = tankY + TANK_WIDTH / 2 - PROJECTILE_WIDTH / 2;
+                    projectile.x = tankX + TANK_WIDTH;
+                    projectile.y = tankY + TANK_HEIGHT / 2 - PROJECTILE_HEIGHT / 2;
                     break;
                 case 2:
                     projectile.x = tankX + TANK_WIDTH / 2 - PROJECTILE_WIDTH / 2;
                     projectile.y = tankY + TANK_HEIGHT;
                     break;
                 case 3:
-                    projectile.x = tankX - TANK_HEIGHT;
-                    projectile.y = tankY + TANK_WIDTH / 2 - PROJECTILE_WIDTH / 2;
+                    projectile.x = tankX - PROJECTILE_WIDTH;
+                    projectile.y = tankY + TANK_HEIGHT / 2 - PROJECTILE_HEIGHT / 2;
                     break;
                 }
                 projectiles.push_back(projectile);
-                break;
+                lastShotTime = SDL_GetTicks(); // Обновляем время последнего выстрела
+            }
+            break;
         case SDLK_UP:
             tankDirection = 0;
             tankMoving = true;
@@ -93,7 +103,6 @@ void handleInput(SDL_Event& event, bool& running) {
             tankDirection = 1;
             tankMoving = true;
             break;
-            }
         }
     }
     else if (event.type == SDL_KEYUP) {
@@ -356,6 +365,15 @@ int main(int argc, char* argv[]) {
                 tankX = x * 64;
                 tankY = y * 64;
             }
+            else if (levelData[y][x] == '3') {
+                            // Создание неразрушаемого стального блока
+                            SteelBlock steelBlock;
+                            steelBlock.x = x * 64;
+                            steelBlock.y = y * 64;
+                            steelBlock.width = 64;
+                            steelBlock.height = 64;
+                            steelBlocks.push_back(steelBlock);
+                        }
 
         }
     }
@@ -431,7 +449,47 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        for (SteelBlock& steelBlock : steelBlocks) {
+                        SDL_Rect tankRect = { static_cast<int>(tankX), static_cast<int>(tankY), static_cast<int>(TANK_WIDTH), static_cast<int>(TANK_HEIGHT) };
+                        SDL_Rect steelBlockRect = { static_cast<int>(steelBlock.x), static_cast<int>(steelBlock.y), steelBlock.width, steelBlock.height };
+                        if (SDL_HasIntersection(&tankRect, &steelBlockRect)) {
+                            // Танк столкнулся с неразрушаемым стальным блоком
+                            switch (tankDirection) {
+                            case 0: // Танк направлен вверх
+                                tankY = steelBlock.y + steelBlock.height;
+                                break;
+                            case 1: // Танк направлен вправо
+                                tankX = steelBlock.x - TANK_WIDTH;
+                                break;
+                            case 2: // Танк направлен вниз
+                                tankY = steelBlock.y - TANK_HEIGHT;
+                                break;
+                            case 3: // Танк направлен влево
+                                tankX = steelBlock.x + steelBlock.width;
+                                break;
+                            }
+                        }
+                    }
 
+        for (Enemy& enemy : enemies) {
+                        SDL_Rect tankRect = { static_cast<int>(tankX), static_cast<int>(tankY), static_cast<int>(TANK_WIDTH), static_cast<int>(TANK_HEIGHT) };
+                        SDL_Rect enemyRect = { static_cast<int>(enemy.x), static_cast<int>(enemy.y), static_cast<int>(TANK_WIDTH), static_cast<int>(TANK_HEIGHT) };
+                        if (SDL_HasIntersection(&tankRect, &enemyRect)) {
+                            // Танк игрока столкнулся с вражеским танком
+                            if (tankX < enemy.x) {
+                                tankX = enemy.x - TANK_WIDTH;
+                            }
+                            else if (tankX > enemy.x) {
+                                tankX = enemy.x + TANK_WIDTH;
+                            }
+                            if (tankY < enemy.y) {
+                                tankY = enemy.y - TANK_HEIGHT;
+                            }
+                            else if (tankY > enemy.y) {
+                                tankY = enemy.y + TANK_HEIGHT;
+                            }
+                        }
+                    }
 
         // Очистка экрана
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
@@ -441,6 +499,12 @@ int main(int argc, char* argv[]) {
         for (Brick& brick : bricks) {
             SDL_Rect brickRect = { brick.x, brick.y, brick.width, brick.height };
             SDL_RenderCopy(renderer, brickTexture, nullptr, &brickRect);
+        }
+
+        // Отрисовка неразрушаемых стальных блоков
+        for (SteelBlock& steelBlock : steelBlocks) {
+            SDL_Rect steelBlockRect = { static_cast<int>(steelBlock.x), static_cast<int>(steelBlock.y), steelBlock.width, steelBlock.height };
+            SDL_RenderCopy(renderer, steelBlockTexture, nullptr, &steelBlockRect);
         }
 
         // Отрисовка снарядов
@@ -466,8 +530,36 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        // Обработка столкновений снарядов с неразрушаемыми стальными блоками
+                    for (auto it = projectiles.begin(); it != projectiles.end();) {
+                        Projectile& projectile = *it;
+                        bool hitSteelBlock = false;
+                        for (auto it2 = steelBlocks.begin(); it2 != steelBlocks.end(); ++it2) {
+                            SteelBlock& steelBlock = *it2;
 
-        // Обработка столкновений снарядов с кирпичами
+                            int projectileHidth = PROJECTILE_WIDTH;
+                            int projectileWidth = PROJECTILE_HEIGHT;
+
+                            if (projectile.direction == 1 || projectile.direction == 3) {
+                                std::swap(projectileHidth, projectileWidth);
+                            }
+
+                            if (projectile.x + projectileHidth > steelBlock.x && projectile.x < steelBlock.x + steelBlock.width &&
+                                (projectile.y) + projectileWidth > steelBlock.y && (projectile.y) < steelBlock.y + steelBlock.height) {
+                                // Снаряд попал в неразрушаемый стальной блок
+                                hitSteelBlock = true;
+                                break; // Прерываем цикл после первого попадания
+                            }
+                        }
+
+                        if (hitSteelBlock) {
+                            it = projectiles.erase(it); // Удаляем снаряд
+                        }
+                        else {
+                            ++it;
+                        }
+                    }
+
         // Обработка столкновений снарядов с кирпичами
         for (auto it = projectiles.begin(); it != projectiles.end();) {
             Projectile& projectile = *it;
